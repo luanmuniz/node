@@ -45,6 +45,8 @@ directories.
 * `common.js`: see [Common API](#common-api).
 * `compare.js`: command line tool for comparing performance between different
   Node.js binaries.
+* `compare-isolation.js`: compares process and worker isolation for one legacy
+  benchmark file, including total time, CPU time, and peak memory.
 * `compare-node-bench.js`: parallel comparison tool for explicit `node:bench`
   files. It does not change or invoke `compare.js`.
 * `compare.R`: R script for statistically analyzing the output of

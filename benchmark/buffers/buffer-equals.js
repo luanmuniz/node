@@ -5,7 +5,7 @@ const bench = common.createBenchmark(main, {
   size: [0, 512, 16386],
   difflen: ['true', 'false'],
   n: [1e6],
-});
+}, { isolation: 'worker' });
 
 function main({ n, size, difflen }) {
   const b0 = Buffer.alloc(size, 'a');

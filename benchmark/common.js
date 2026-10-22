@@ -1,6 +1,7 @@
 'use strict';
 
 const child_process = require('child_process');
+const { parentPort, Worker } = require('worker_threads');
 const http_benchmarkers = require('./_http-benchmarkers.js');
 
 function allow() {
@@ -29,6 +30,15 @@ class Benchmark {
     const parsed_args = this._parseArgs(argv, configs, options);
 
     this.originalOptions = options;
+    this.isolation = process.env.NODE_RUN_BENCHMARK_ISOLATION ??
+      options.isolation ??
+      'process';
+
+    const isolationOptions = ['process', 'worker'];
+    if (!isolationOptions.includes(this.isolation)) {
+      throw new TypeError(`Unknown benchmark isolation: ${this.isolation}`);
+    }
+
     this.options = parsed_args.cli;
     this.extra_options = parsed_args.extra;
     this.combinationFilter = typeof options.combinationFilter === 'function' ? options.combinationFilter : allow;
@@ -63,8 +73,7 @@ class Benchmark {
       if (process.env.NODE_RUN_BENCHMARK_FN !== undefined) {
         fn(this.config);
       } else {
-        // _run will use fork() to create a new process for each configuration
-        // combination.
+        // _run creates a new isolate for each configuration combination.
         this._run();
       }
     });
@@ -224,7 +233,7 @@ class Benchmark {
 
     if (this.originalOptions.setup) {
       // Only do this from the root process. _run() is only ever called from the root,
-      // in child processes main is run directly.
+      // in isolated executions main is run directly.
       this.originalOptions.setup(this.queue);
     }
 
@@ -260,12 +269,20 @@ class Benchmark {
         childArgs.push(`${key}=${value}`);
       }
 
-      const child = child_process.fork(require.main.filename, childArgs, {
-        env: childEnv,
-        execArgv: childExecArgv,
-      });
+      let child;
+      let exitEvent;
+      if (this.isolation === 'worker') {
+        child = this._runWorker(childArgs, childEnv, childExecArgv);
+        exitEvent = 'exit';
+      } else {
+        child = child_process.fork(require.main.filename, childArgs, {
+          env: childEnv,
+          execArgv: childExecArgv,
+        });
+        exitEvent = 'close';
+      }
       child.on('message', sendResult);
-      child.on('close', (code) => {
+      child.on(exitEvent, (code) => {
         if (code) {
           process.exit(code);
         }
@@ -277,6 +294,10 @@ class Benchmark {
     };
 
     recursive(0);
+  }
+
+  _runWorker(argv, env, execArgv) {
+    return new Worker(require.main.filename, { argv, env, execArgv });
   }
 
   start() {
@@ -353,7 +374,14 @@ function formatResult(data) {
 }
 
 function sendResult(data) {
-  if (process.send) {
+  if (parentPort) {
+    parentPort.postMessage(data);
+    if (process.env.NODE_RUN_BENCHMARK_FN !== undefined) {
+      require('timers').setTimeout(() => {
+        process.exit(0);
+      }, 5000).unref();
+    }
+  } else if (process.send) {
     // If forked, report by process send
     process.send(data, () => {
       if (process.env.NODE_RUN_BENCHMARK_FN !== undefined) {
